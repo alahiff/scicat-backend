@@ -8,6 +8,7 @@ import { FilterQuery, Model, PipelineStage, QueryOptions } from "mongoose";
 import { isEmpty } from "lodash";
 import {
   addCreatedByFields,
+  decodeURIComponentExtended,
   parsePipelineProjection,
   parsePipelineSort,
 } from "src/common/utils";
@@ -124,20 +125,15 @@ export class MetadataKeysService {
 
     const { sourceType, userGroups, isPublished, metadata } = doc;
 
-    const filters = Object.entries(metadata).map(([key, entry]) => {
-      const humanReadableName =
-        (entry as ScientificMetadataEntry).human_name ?? "";
-
-      // The source model uses these keys as object field names, so they're URL-encoded
-      // to satisfy Mongo's field-name rules. Here the key is a value, not a field name,
-      // so store the decoded version.
-      const originalKey = decodeURIComponent(key);
-      return {
+    const filters = this.flattenMetadata(metadata).map(
+      ({ key, humanReadableName }) => ({
         sourceType,
-        key: originalKey,
+        key,
         humanReadableName,
-      };
-    });
+      }),
+    );
+
+    if (filters.length === 0) return;
 
     const queryFilter = { $or: filters };
 
@@ -180,6 +176,37 @@ export class MetadataKeysService {
     Logger.log(
       `${delta === 1 ? "Upserted" : "Decremented or deleted"} MetadataKeys for ${sourceType}: ${Object.keys(metadata).join(", ")}`,
     );
+  }
+
+  // Returns one entry per leaf, keyed by the dotted path (e.g. "a.b.c"). An object holding
+  // "value" (optionally with unit/human_name) is a leaf; any other plain object is nesting.
+  // Stored field names are URL-encoded for Mongo, so each segment is decoded here
+  // (a literal "." inside a segment comes back as ".", same as the dataset keys endpoint).
+  private flattenMetadata(
+    metadata: Record<string, unknown>,
+    prefix = "",
+  ): { key: string; humanReadableName: string }[] {
+    return Object.entries(metadata).flatMap(([rawKey, entry]) => {
+      const key = `${prefix}${decodeURIComponentExtended(rawKey)}`;
+      const isNested =
+        entry !== null &&
+        typeof entry === "object" &&
+        !Array.isArray(entry) &&
+        !("value" in entry);
+      if (isNested) {
+        return this.flattenMetadata(
+          entry as Record<string, unknown>,
+          `${key}.`,
+        );
+      }
+      return [
+        {
+          key,
+          humanReadableName:
+            (entry as ScientificMetadataEntry | null)?.human_name ?? "",
+        },
+      ];
+    });
   }
 
   private groupCountDeltas(
