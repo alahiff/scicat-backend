@@ -149,7 +149,12 @@ export const mapScientificQuery = (
 
   scientific.forEach((scientificFilter) => {
     const { lhs, relation, rhs, unit } = scientificFilter;
-    const encodedLhs = encodeURIComponentExtended(lhs);
+    // "." in the lhs is a path separator into nested scientificMetadata, so encode
+    // each segment separately (stored keys have their own literal dots as %2E).
+    const encodedLhs = lhs
+      .split(".")
+      .map((segment) => encodeURIComponentExtended(segment))
+      .join(".");
     const matchKeyGeneric = `${field}.${encodedLhs}`;
     const matchKeyMeasurement = `${field}.${encodedLhs}.valueSI`;
     const matchUnit = `${field}.${encodedLhs}.unitSI`;
